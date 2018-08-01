@@ -6,27 +6,27 @@
 #include <stdlib.h>
 
 typedef struct ethernet_header{
-	u_char dest[6];
-	u_char source[6];
-	u_short type;
+	uint8_t dest[6];
+	uint8_t source[6];
+	uint16_t type;
 } ETHER_HDR;
 
 typedef struct ip_hdr
 {
-    u_char header_len :4; // 4 bit header length
-    u_char version :4; //4-bit ip version
-    u_char ip_tos; // 8 bit type of service
-    uint16_t ip_total_length; // 2 byte total length
+    uint8_t header_len :4; // 4 bit header length
+    uint8_t version :4; //4-bit ip version
+    uint8_t ip_tos; // 8 bit type of service
+    uint16_t total_length; // 2 byte total length
     uint16_t ip_id; // 2 byte Unique identifier
  
     unsigned char ip_more_fragment :1;
     unsigned char ip_dont_fragment :1;
     unsigned char ip_reserved_zero :1;
  
- 	unsigned char ip_frag_offset; // Fragment offset field
+ 	uint8_t ip_frag_offset; // Fragment offset field
  
-    u_char ip_ttl; // 1 byte TTL
-    char protocol_id; // 1 byte protocol(TCP,UDP etc)
+    uint8_t ip_ttl; // 1 byte TTL
+    uint8_t protocol_id; // 1 byte protocol(TCP,UDP etc)
     uint16_t ip_checksum; // 2 byte IP checksum
     struct in_addr ip_srcaddr; // 4 byte source address
     struct in_addr ip_dstaddr; // 4 byte destination address
@@ -35,15 +35,11 @@ typedef struct ip_hdr
 typedef struct tcp_hdr{
 	uint16_t tcp_srcport;
 	uint16_t tcp_dstport;
-	int tcp_seqnum;
-	int tcp_acknum;
+	uint tcp_seqnum;
+	uint tcp_acknum;
 	u_char header_len1:4;
 	u_char header_len2:4;
 } TCP_HDR;
-
-typedef struct tcp_payload{
-	u_char data[16];
-} TCP_PAY;
 
 void usage() {
   printf("syntax: pcap_test enp1s0\n");
@@ -91,8 +87,8 @@ int main(int argc, char* argv[]) {
     	int l4_protocol = iph->protocol_id;
         char ip_length = iph->header_len;
 
-    	printf("Source_IP           : %s\n", inet_ntoa(iph->ip_srcaddr));
-    	printf("Destination_IP      : %s\n", inet_ntoa(iph->ip_dstaddr));
+    	printf("Source_IP           : %s\n", inet_ntoa(*(struct in_addr*)&iph->ip_srcaddr));
+    	printf("Destination_IP      : %s\n", inet_ntoa(*(struct in_addr*)&iph->ip_dstaddr));
     	printf("L4 Protocol         : 0x%x\n",l4_protocol);
     
     	//verify upper layer
@@ -100,21 +96,30 @@ int main(int argc, char* argv[]) {
 
         if(l4_protocol==0x06){
     		TCP_HDR *tcph;
-    		tcph = (struct tcp_hdr *)(packet+sizeof(struct ethernet_header)+ip_length*4);
+    		tcph = (struct tcp_hdr *)((char *)iph+ip_length*4);
     		int tcph_size = int(tcph->header_len1)*4;
     		//printf("%u %lu",header->caplen,sizeof(struct ethernet_header)+sizeof(struct ip_hdr)+sizeof(struct tcp_hdr));
     		
     		printf("Source_Port         : %d\n", ntohs(tcph->tcp_srcport));
     		printf("Destination_Port    : %d\n", ntohs(tcph->tcp_dstport));
 			
-			if(sizeof(struct ethernet_header)+ip_length*4+tcph_size < header->caplen){
-				TCP_PAY *tcpp;
-				tcpp = (struct tcp_payload *)(packet+sizeof(struct ethernet_header)+ip_length*4+tcph_size);
+			if(sizeof(struct ethernet_header)+ip_length*4+tcph_size < iph->total_length){
+				
+                u_char *tcpp = (unsigned char *)((char *)tcph+tcph_size);
 				printf("Data                : ");
-				for(int i=0;i<16;i++){
-					printf("%.2X", tcpp->data[i]);
-				}
+				uint tcpp_length = iph->total_length - sizeof(struct ethernet_header)+ip_length*4+tcph_size;
+                if(tcpp_length >= 16){
+                    for(int i=0;i<16;i++){
+    					printf("%.2X", tcpp[i]);
+    				}
+                }
+                else{
+                    for(int i=0;i<tcpp_length;i++){
+                        printf("%.2X", tcpp[i]);
+                    }
+                }
 				printf("\n");
+
 			}
     	}
     	else{
