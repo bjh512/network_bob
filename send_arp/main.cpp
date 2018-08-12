@@ -85,6 +85,30 @@ void assign_arp(char *host_mac, ETHER_HDR *eth, ARP_HDR *arph, in_addr *victim_i
     memcpy(&arph->desti_ip,victim_ip,4); 
 }
 
+void send_arp(ETHER_HDR *eth, ARP_HDR *arph, pcap_t *handle){
+    //make and send frame
+    int frame_length = sizeof(*eth)+sizeof(*arph);
+    u_char frame[sizeof(*eth)+sizeof(*arph)];
+    
+    memset(frame,0,sizeof(*eth)+sizeof(*arph));
+    memcpy(frame,eth,sizeof(*eth));
+    memcpy(frame+sizeof(*eth),arph,sizeof(*arph));
+
+    if (pcap_sendpacket(handle, frame, frame_length) != 0)
+    {
+        fprintf(stderr,"\nError sending the packet: %s\n", pcap_geterr(handle));
+        printf("SENDING ERROR!\n");
+        exit(0);
+    }        
+    
+    for (int i=0; i<frame_length; i++){
+        if(i==16 || i==32){
+            printf("\n");
+        }
+        printf("%.2x",frame[i]);
+    }
+    printf("\n");
+}
 
 int main(int argc, char* argv[]) {
   if (argc != 4) {
@@ -145,27 +169,7 @@ int main(int argc, char* argv[]) {
         assign_ether(host_mac, &eth, "");
         assign_arp(host_mac, &eth, &arph, &victim_ip, "", &myip);   
         
-        //make and send frame
-        int frame_length = sizeof(eth)+sizeof(arph);
-        u_char frame[sizeof(eth)+sizeof(arph)];
-        
-        memset(frame,0,sizeof(eth)+sizeof(arph));
-        memcpy(frame,&eth,sizeof(eth));
-        memcpy(frame+sizeof(eth),&arph,sizeof(arph));
-
-        if (pcap_sendpacket(handle, frame, frame_length) != 0)
-        {
-            fprintf(stderr,"\nError sending the packet: %s\n", pcap_geterr(handle));
-            exit(0);
-        }        
-        
-        for (int i=0; i<frame_length; i++){
-            if(i==16 || i==32){
-                printf("\n");
-            }
-            printf("%.2x",frame[i]);
-        }
-        printf("\n");
+        send_arp(&eth, &arph, handle);
 
         //Receive reply
         int cnt;
@@ -209,27 +213,8 @@ int main(int argc, char* argv[]) {
         assign_arp(host_mac, &eth, &arph, &victim_ip, (char*)victim_mac, &target_ip);   
         printf("IP : %s\n",inet_ntoa(arph.source_ip));
 
-        //make and send frame
-        int frame_length = sizeof(eth)+sizeof(arph);
-        u_char frame[sizeof(eth)+sizeof(arph)];
-        
-        memset(frame,0,sizeof(eth)+sizeof(arph));
-        memcpy(frame,&eth,sizeof(eth));
-        memcpy(frame+sizeof(eth),&arph,sizeof(arph));
+        send_arp(&eth, &arph, handle);
 
-        if (pcap_sendpacket(handle, frame, frame_length) != 0)
-        {
-            fprintf(stderr,"\nError sending the packet: %s\n", pcap_geterr(handle));
-            exit(0);
-        }        
-        
-        for (int i=0; i<frame_length; i++){
-            if(i==16 || i==32){
-                printf("\n");
-            }
-            printf("%.2x",frame[i]);
-        }
-        printf("\n");
         sleep(1);
     }
 
