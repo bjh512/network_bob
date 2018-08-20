@@ -83,7 +83,7 @@ static u_int32_t print_pkt (struct nfq_data *tb)
 }
 
 int check_host(char* http_buf){
-    char *censored = "sex";
+    char *censored = "sex.com";
     char *ptr = strstr(http_buf,censored);
     if(ptr){
         printf("\nHost Matched (%s)\n\n",censored);
